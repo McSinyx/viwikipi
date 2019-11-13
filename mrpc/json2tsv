@@ -21,7 +21,7 @@ import json
 import re
 from itertools import islice
 
-WHITESPACE = re.compile('\s')
+WHITESPACES = re.compile('\s+')
 
 DEV_SIZE = 8
 TRAIN_SIZE = 6  # While getting the GLUE to stick only
@@ -30,7 +30,7 @@ FIELDS = 'label', 'qid', 'aid', 'question', 'answer'
 
 def spaced(string):
     """Return the string obtained by replacing all whitespaces by spaces."""
-    return WHITESPACE.sub(' ', string)
+    return WHITESPACES.sub(' ', string)
 
 
 def standardized(data):

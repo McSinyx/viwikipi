@@ -1,9 +1,16 @@
 # Vietnamese Wikipedia Paraphase Identity experiments
 
-At current state, GLUE for BERT can be executed using
+At the moment, GLUE for Bert can be executed using
 
-    ./glue --output_dir=bert --model_type=bert \
-           --model_name_or_path=bert-base-multilingual-cased
+```sh
+./glue --output-dir=bert --model-type=bert --model=bert-base-multilingual-cased
+```
 
-This is to be released under GNU AGPLv3 which requires each source file
+`glue` is basically [ripped-off from transformers](https://github.com/huggingface/transformers/blob/master/examples/run_glue.py)
+with saner defaults and GNU-style long arguments.
+
+This project is to be released under GNU AGPLv3 which requires each source file
 to have a header stating so.  Please navigate to existing ones for examples.
+
+The current codebase is linted using [flake8](https://gitlab.com/pycqa/flake8).
+Feel free to blacklist any error/warning you feel unnecessary in `tox.ini`.
