@@ -21,16 +21,20 @@ import json
 import re
 from itertools import islice
 
+from transformers import BertTokenizer
+
 WHITESPACES = re.compile('\s+')
 
-DEV_SIZE = 8
-TRAIN_SIZE = 6  # While getting the GLUE to stick only
+TRAIN_SIZE = 12084  # so that there'll be 6009 left for dev
 FIELDS = 'label', 'qid', 'aid', 'question', 'answer'
+
+BERT_MODEL = 'bert-base-multilingual-cased'
+BERT_TEXT = '[CLS] {question} [SEP] {answer} [SEP]'
 
 
 def spaced(string):
     """Return the string obtained by replacing all whitespaces by spaces."""
-    return WHITESPACES.sub(' ', string)
+    return WHITESPACES.sub(' ', string).strip()
 
 
 def standardized(data):
@@ -48,8 +52,11 @@ def write(file, dicts):
     writer.writerows(dicts)
 
 
-with open('train.json') as f: data = standardized(json.load(f))
-with open('dev.tsv', 'w') as dev, open('train.tsv', 'w') as train:
-    write(dev, islice(data, DEV_SIZE))
+tokenize = BertTokenizer.from_pretrained(BERT_MODEL).tokenize
+with open('train.json') as f:
+    data = filter(lambda d: len(tokenize(BERT_TEXT.format(**d))) < 501,
+                  standardized(json.load(f)))
+
+with open('train.tsv', 'w') as train, open('dev.tsv', 'w') as dev:
     write(train, islice(data, TRAIN_SIZE))
-    #write(train, data)
+    write(dev, data)
