@@ -25,7 +25,7 @@ from transformers import BertTokenizer
 
 WHITESPACES = re.compile('\s+')
 
-TRAIN_SIZE = 12084  # so that there'll be 6009 left for dev
+TRAIN_SIZE = 10010
 FIELDS = 'label', 'qid', 'aid', 'question', 'answer'
 
 BERT_MODEL = 'bert-base-multilingual-cased'
@@ -54,7 +54,7 @@ def write(file, dicts):
 
 tokenize = BertTokenizer.from_pretrained(BERT_MODEL).tokenize
 with open('train.json') as f:
-    data = filter(lambda d: len(tokenize(BERT_TEXT.format(**d))) < 501,
+    data = filter(lambda d: len(tokenize(BERT_TEXT.format(**d))) < 125,
                   standardized(json.load(f)))
 
 with open('train.tsv', 'w') as train, open('dev.tsv', 'w') as dev:
