@@ -447,7 +447,7 @@ def main():
     parser.add_argument('--eval-all-checkpoints', action='store_true',
                         help=('evaluate all checkpoints prefixed by model '
                               'and postfixed by a step number'))
-    parser.add_argument('--no-cuda', action='store_false', default=False,
+    parser.add_argument('--no-cuda', action='store_false', default=True,
                         dest='cuda', help='avoid using CUDA when available')
     parser.add_argument(
         '--overwrite-output-dir', action='store_true', default=True,
