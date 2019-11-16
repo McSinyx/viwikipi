@@ -404,21 +404,19 @@ def main():
                         help=('maximum input length after tokenization. '
                               'Sequences longer than this will be truncated, '
                               'sequences shorter will be padded.'))
-    parser.add_argument('--train', action='store_true', default=True,
-                        help='run training')
-    parser.add_argument('--no-train', action='store_false', dest='train')
-    parser.add_argument('--eval', action='store_true', default=True,
-                        help='evaluate on the dev set')
-    parser.add_argument('--no-eval', action='store_false', dest='eval')
+    parser.add_argument('--no-train', action='store_false', default=True,
+                        dest='train', help='do not train')
+    parser.add_argument('--no-eval', action='store_false', default=True,
+                        dest='eval', help='do not evaluate the dev set')
     parser.add_argument('--eval-while-train', action='store_true',
                         help='evaluate at each logging step of training')
     parser.add_argument('--lower-case', action='store_true',
                         help='for uncased models')
     parser.add_argument(
-        '--per-gpu-train-batch-size', metavar='SIZE', default=8, type=int,
+        '--per-gpu-train-batch-size', metavar='SIZE', default=32, type=int,
         help='batch size per GPU/CPU for training')
     parser.add_argument(
-        '--per-gpu-eval-batch-size', metavar='SIZE', default=8, type=int,
+        '--per-gpu-eval-batch-size', metavar='SIZE', default=32, type=int,
         help='batch size per GPU/CPU for evaluation')
     parser.add_argument(
         '--gradient-accumulation-steps', metavar='N', default=1, type=int,
@@ -442,24 +440,22 @@ def main():
 
     parser.add_argument('--logging-steps', metavar='N', default=50, type=int,
                         help='log every N updates steps')
-    parser.add_argument('--save-steps', metavar='N', default=50, type=int,
-                        help='save checkpoint every N updates steps')
+    parser.add_argument(
+        '--save-steps', metavar='N', default=-1, type=int,
+        help='save checkpoint every N updates steps (nonpositive to disable)')
     parser.add_argument('--eval-all-checkpoints', action='store_true',
                         help=('evaluate all checkpoints prefixed by model '
                               'and postfixed by a step number'))
     parser.add_argument('--no-cuda', action='store_false', default=True,
                         dest='cuda', help='avoid using CUDA when available')
     parser.add_argument(
-        '--overwrite-output-dir', action='store_true', default=True,
-        help='overwrite the content of the output directory')
-    parser.add_argument('--no-overwrite-output-dir',
-                        action='store_false',
-                        dest='overwrite_output_dir')
+        '--no-overwrite-output-dir', action='store_false',
+        default=True, dest='overwrite_output_dir',
+        help='do not overwrite the content of the output directory')
     parser.add_argument(
-        '--overwrite-cache', action='store_true', default=True,
-        help='overwrite the cached training and evaluation sets')
-    parser.add_argument('--no-overwrite-cache', action='store_false',
-                        dest='overwrite_cache')
+        '--no-overwrite-cache', action='store_false',
+        default=True, dest='overwrite_cache',
+        help='do not overwrite the cached training and evaluation sets')
     parser.add_argument('--seed', default=42, type=int,
                         help='random seed for initialization')
 
