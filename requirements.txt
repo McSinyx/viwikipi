@@ -3,4 +3,3 @@ tensorboardX
 tensorboard
 scikit-learn
 seqeval
-https://github.com/NVIDIA/apex/archive/master.zip

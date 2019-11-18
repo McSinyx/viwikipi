@@ -84,15 +84,15 @@ def train(args, train_dataset, model, tokenizer):
         train_sampler = DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler,
                                   batch_size=args.train_batch_size)
+    data_steps = len(train_dataloader) // args.gradient_accumulation_steps
 
     if args.max_steps > 0:
         t_total = args.max_steps
-        args.num_train_epochs = (args.max_steps
-                                 // (len(train_dataloader)
-                                     // args.gradient_accumulation_steps) + 1)
+        args.num_train_epochs = args.max_steps//data_steps + 1
     else:
-        t_total = (len(train_dataloader) // args.gradient_accumulation_steps
-                   * args.num_train_epochs)
+        t_total = args.num_train_epochs * data_steps
+    if not args.logging_steps: args.logging_steps = data_steps
+    if not args.save_steps: args.save_steps = data_steps
 
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = {'bias', 'LayerNorm.weight'}
@@ -107,20 +107,10 @@ def train(args, train_dataset, model, tokenizer):
                       lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps,
                                      t_total=t_total)
-    if args.fp16:
-        try:
-            from apex import amp
-        except ImportError:
-            raise ImportError('Please install apex from '
-                              'https://www.github.com/nvidia/apex '
-                              'to use fp16 training.')
-        model, optimizer = amp.initialize(
-            model, optimizer, opt_level=args.fp16_optim)
 
-    # multi-gpu training (should be after apex fp16 initialization)
+    # multi-gpu training
     if args.n_gpu > 1: model = torch.nn.DataParallel(model)
-
-    # Distributed training (should be after apex fp16 initialization)
+    # Distributed training
     if args.local_rank != -1:
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[args.local_rank], output_device=args.local_rank,
@@ -165,21 +155,17 @@ def train(args, train_dataset, model, tokenizer):
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
 
-            if args.fp16:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
+            loss.backward()
 
             tr_loss += loss.item()
-            if not ((step+1) % args.gradient_accumulation_steps and args.tpu):
-                if args.fp16:
-                    parameters = amp.master_params(optimizer)
-                else:
-                    parameters = model.parameters()
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                parameters = model.parameters()
                 torch.nn.utils.clip_grad_norm_(parameters, args.max_grad_norm)
 
-                optimizer.step()
+                if 'COLAB_TPU_ADDR' in os.environ:
+                    args.xla_model.optimizer_step(optimizer, barrier=True)
+                else:
+                    optimizer.step()
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
@@ -213,11 +199,6 @@ def train(args, train_dataset, model, tokenizer):
                     torch.save(args, os.path.join(output_dir,
                                                   'training_args.bin'))
                     logger.info('Saving model checkpoint to %s', output_dir)
-
-            if args.tpu:
-                args.xla_model.optimizer_step(optimizer, barrier=True)
-                model.zero_grad()
-                global_step += 1
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -408,15 +389,17 @@ def main():
                         dest='train', help='do not train')
     parser.add_argument('--no-eval', action='store_false', default=True,
                         dest='eval', help='do not evaluate the dev set')
-    parser.add_argument('--eval-while-train', action='store_true',
-                        help='evaluate at each logging step of training')
+    parser.add_argument(
+        '--no-eval-while-train', action='store_false',
+        default=True, dest='eval_while_train',
+        help='do not evaluate at each logging step of training')
     parser.add_argument('--lower-case', action='store_true',
                         help='for uncased models')
     parser.add_argument(
         '--per-gpu-train-batch-size', metavar='SIZE', default=32, type=int,
         help='batch size per GPU/CPU for training')
     parser.add_argument(
-        '--per-gpu-eval-batch-size', metavar='SIZE', default=32, type=int,
+        '--per-gpu-eval-batch-size', metavar='SIZE', default=8, type=int,
         help='batch size per GPU/CPU for evaluation')
     parser.add_argument(
         '--gradient-accumulation-steps', metavar='N', default=1, type=int,
@@ -435,14 +418,15 @@ def main():
     parser.add_argument(
         '--max-steps', metavar='N', default=-1, type=int,
         help='number of training steps (override num-train-epochs)')
-    parser.add_argument('--warmup-steps', metavar='N', default=0, type=int,
-                        help='linear warmup')
+    parser.add_argument('--warmup-steps', metavar='N', default=10, type=int,
+                        help='number of linear warmup steps')
 
-    parser.add_argument('--logging-steps', metavar='N', default=50, type=int,
-                        help='log every N updates steps')
-    parser.add_argument(
-        '--save-steps', metavar='N', default=-1, type=int,
-        help='save checkpoint every N updates steps (nonpositive to disable)')
+    parser.add_argument('--logging-steps', metavar='N', type=int,
+                        help=('log every N updates steps'
+                              '(0 to log every epoch, negative to disable)'))
+    parser.add_argument('--save-steps', metavar='N', default=-1, type=int,
+                        help=('save checkpoint every N updates steps'
+                              '(0 to save every epoch, negative to disable)'))
     parser.add_argument('--eval-all-checkpoints', action='store_true',
                         help=('evaluate all checkpoints prefixed by model '
                               'and postfixed by a step number'))
@@ -459,22 +443,6 @@ def main():
     parser.add_argument('--seed', default=42, type=int,
                         help='random seed for initialization')
 
-    parser.add_argument('--tpu', action='store_true',
-                        help='run on the TPU defined by environment variables')
-    parser.add_argument('--tpu-ip-address', metavar='ADDR',
-                        help='TPU IP address if none is set in environment')
-    parser.add_argument('--tpu-name', metavar='NAME',
-                        help='TPU name if none are set in environment')
-    parser.add_argument('--xrt-tpu-config', metavar='CFG',
-                        help='XRT TPU config if none set in environment')
-
-    parser.add_argument('--fp16', action='store_true',
-                        help=('prefer 16-bit (mixed) precision to 32-bit '
-                              '(through NVIDIA Apex)'))
-    parser.add_argument(
-        '--fp16-optim', choices=('O0', 'O1', 'O2', 'O3'), default='O1',
-        help=('Apex AMP optimization level. '
-              'For details, see https://nvidia.github.io/apex/amp.html'))
     parser.add_argument('--local-rank', metavar='RANK', type=int, default=-1,
                         help='local rank for distributed training')
     parser.add_argument('--server-ip', metavar='HOST',
@@ -499,7 +467,11 @@ def main():
         ptvsd.wait_for_attach()
 
     # Setup CUDA, GPU & distributed training
-    if args.local_rank == -1 or not args.cuda:
+    if 'COLAB_TPU_ADDR' in os.environ:
+        from torch_xla.core import xla_model as xm
+        args.device = xm.xla_device()
+        args.xla_model = xm
+    elif args.local_rank == -1 or not args.cuda:
         dev = 'cuda' if torch.cuda.is_available() and args.cuda else 'cpu'
         args.device = torch.device(dev)
         args.n_gpu = torch.cuda.device_count()
@@ -511,30 +483,13 @@ def main():
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
 
-    if args.tpu:
-        if args.tpu_ip_address:
-            os.environ['TPU_IP_ADDRESS'] = args.tpu_ip_address
-        if args.tpu_name:
-            os.environ['TPU_NAME'] = args.tpu_name
-        if args.xrt_tpu_config:
-            os.environ['XRT_TPU_CONFIG'] = args.xrt_tpu_config
-
-        assert 'TPU_IP_ADDRESS' in os.environ
-        assert 'TPU_NAME' in os.environ
-        assert 'XRT_TPU_CONFIG' in os.environ
-
-        from torch_xla.core import xla_model as xm
-        args.device = xm.xla_device()
-        args.xla_model = xm
-
     # Setup logging
     logging.basicConfig(
         format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
         level=(logging.INFO if args.local_rank in [-1, 0] else logging.WARN))
-    logger.warning(('Process rank: %s, device: %s, n_gpu: %s, '
-                    'distributed training: %s, 16-bits training: %s'),
-                   args.local_rank, args.device, args.n_gpu,
-                   bool(args.local_rank+1), args.fp16)
+    logger.warning(
+        'Process rank: %s, device: %s, n_gpu: %s, distributed training: %s',
+        args.local_rank, args.device, args.n_gpu, bool(args.local_rank+1))
 
     # Set seed
     set_seed(args)
@@ -579,7 +534,7 @@ def main():
     # Saving best-practices: if you use defaults names for the model,
     # you can reload it using from_pretrained()
     if ((args.local_rank == -1 or torch.distributed.get_rank() == 0)
-        and args.train and not args.tpu):
+        and args.train):
         # Create output directory if needed
         if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
             os.makedirs(args.output_dir)
