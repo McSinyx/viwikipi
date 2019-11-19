@@ -20,7 +20,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with viwikipi.  If not, see <https://www.gnu.org/licenses/>.
 
-import logging
 import os
 from argparse import ArgumentParser
 from glob import glob
@@ -28,6 +27,7 @@ from itertools import chain
 
 import numpy as np
 import torch
+from loguru import logger
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
 from torch.utils.data.distributed import DistributedSampler
@@ -61,8 +61,6 @@ MODEL_CLASSES = {
                 RobertaTokenizer),
     'distilbert': (DistilBertConfig, DistilBertForSequenceClassification,
                    DistilBertTokenizer)}
-
-logger = logging.getLogger(__name__)
 
 
 def set_seed(args):
@@ -118,17 +116,17 @@ def train(args, train_dataset, model, tokenizer):
 
     # Train!
     logger.info('***** Running training *****')
-    logger.info('  Num examples = %d', len(train_dataset))
-    logger.info('  Num Epochs = %d', args.num_train_epochs)
-    logger.info('  Instantaneous batch size per GPU = %d',
+    logger.info(f'Num examples = {len(train_dataset)}')
+    logger.info(f'Num Epochs = {args.num_train_epochs}')
+    logger.info('Instantaneous batch size per GPU = {}',
                 args.per_gpu_train_batch_size)
     logger.info(
-        '  Total train batch size (parallel, distributed & accumulation) = %d',
+        '  Total train batch size (parallel, distributed & accumulation) = {}',
         (args.train_batch_size * args.gradient_accumulation_steps
          * (torch.distributed.get_world_size() if args.local_rank+1 else 1)))
-    logger.info('  Gradient Accumulation steps = %d',
-                args.gradient_accumulation_steps)
-    logger.info('  Total optimization steps = %d', t_total)
+    logger.info(
+        f'Gradient Accumulation steps = {args.gradient_accumulation_steps}')
+    logger.info(f'Total optimization steps = {t_total}')
 
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
@@ -162,10 +160,7 @@ def train(args, train_dataset, model, tokenizer):
                 parameters = model.parameters()
                 torch.nn.utils.clip_grad_norm_(parameters, args.max_grad_norm)
 
-                if 'COLAB_TPU_ADDR' in os.environ:
-                    args.xla_model.optimizer_step(optimizer, barrier=True)
-                else:
-                    optimizer.step()
+                args.step_optim(optimizer)
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
@@ -175,7 +170,8 @@ def train(args, train_dataset, model, tokenizer):
                     # Log metrics
                     # Only evaluate when single GPU for better metrics average
                     if args.local_rank == -1 and args.eval_while_train:
-                        results = evaluate(args, model, tokenizer)
+                        prefix = f'no{global_step // args.logging_steps}'
+                        results = evaluate(args, model, tokenizer, prefix)
                         for key, value in results.items():
                             tb_writer.add_scalar(
                                 f'eval_{key}', value, global_step)
@@ -198,7 +194,7 @@ def train(args, train_dataset, model, tokenizer):
                     model_to_save.save_pretrained(output_dir)
                     torch.save(args, os.path.join(output_dir,
                                                   'training_args.bin'))
-                    logger.info('Saving model checkpoint to %s', output_dir)
+                    logger.info(f'Saving model checkpoint to {output_dir}')
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -213,7 +209,7 @@ def train(args, train_dataset, model, tokenizer):
     return global_step, tr_loss / global_step
 
 
-def evaluate(args, model, tokenizer, prefix=''):
+def evaluate(args, model, tokenizer, prefix):
     """Evaluate the dev set."""
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     if args.task == 'mnli':
@@ -242,8 +238,8 @@ def evaluate(args, model, tokenizer, prefix=''):
 
         # Eval!
         logger.info(f'***** Running evaluation {prefix} *****')
-        logger.info('  Num examples = %d', len(eval_dataset))
-        logger.info('  Batch size = %d', args.eval_batch_size)
+        logger.info(f'Num examples = {len(eval_dataset)}')
+        logger.info(f'Batch size = {args.eval_batch_size}')
         eval_loss = 0.0
         nb_eval_steps = 0
         preds = None
@@ -279,13 +275,14 @@ def evaluate(args, model, tokenizer, prefix=''):
         result = compute_metrics(eval_task, preds, out_label_ids)
         results.update(result)
 
-        output_eval_file = os.path.join(eval_output_dir, prefix,
-                                        'eval_results.txt')
+        eval_dir = os.path.join(eval_output_dir, prefix)
+        if not os.path.exists(eval_dir): os.makedirs(eval_dir)
+        output_eval_file = os.path.join(eval_dir, 'eval_results.txt')
         with open(output_eval_file, 'w') as writer:
-            logger.info(f'***** Eval results {prefix} *****')
+            logger.debug(f'***** Eval results {prefix} *****')
             for key in sorted(result.keys()):
-                logger.info('  %s = %s', key, str(result[key]))
-                writer.write('%s = %s\n' % (key, str(result[key])))
+                logger.debug(f'{key} = {result[key]}')
+                writer.write(f'{key} = {result[key]}\n')
     return results
 
 
@@ -305,12 +302,10 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
             os.path.basename(args.model.rstrip('/')),
             args.max_seq, task))
     if os.path.exists(cached_features_file) and not args.overwrite_cache:
-        logger.info('Loading features from cached file %s',
-                    cached_features_file)
+        logger.info(f'Loading features from cache {cached_features_file}')
         features = torch.load(cached_features_file)
     else:
-        logger.info('Creating features from dataset file at %s',
-                    args.data_dir)
+        logger.info(f'Creating features from dataset file at {args.data_dir}')
         label_list = processor.get_labels()
         if task in ['mnli', 'mnli-mm'] and args.model_type in ['roberta']:
             # HACK(label indices are swapped in RoBERTa pretrained model)
@@ -330,8 +325,7 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
             pad_token=input_ids[0],
             pad_token_segment_id=(4 if args.model_type in ['xlnet'] else 0))
         if args.local_rank in [-1, 0]:
-            logger.info('Saving features into cached file %s',
-                        cached_features_file)
+            logger.info(f'Saving features into cache {cached_features_file}')
             torch.save(features, cached_features_file)
 
     # Make sure only the first process in distributed training
@@ -356,8 +350,7 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
     return dataset
 
 
-def main():
-    """Parse command-line arguments and run."""
+if __name__ == '__main__':
     parser = ArgumentParser()
     # Required parameters
     parser.add_argument('--model-type', required=True,
@@ -421,6 +414,7 @@ def main():
     parser.add_argument('--warmup-steps', metavar='N', default=10, type=int,
                         help='number of linear warmup steps')
 
+    parser.add_argument('--log-file', metavar='PATH', help='path to log file')
     parser.add_argument('--logging-steps', metavar='N', type=int,
                         help=('log every N updates steps'
                               '(0 to log every epoch, negative to disable)'))
@@ -467,11 +461,12 @@ def main():
         ptvsd.wait_for_attach()
 
     # Setup CUDA, GPU & distributed training
+    args.step_optim = lambda optimizer: optimizer.step()
     if 'COLAB_TPU_ADDR' in os.environ:
         from torch_xla.core import xla_model as xm
         args.device = xm.xla_device()
-        args.xla_model = xm
-        args.n_gpu = 1
+        args.step_optim = lambda optim: xm.optimizer_step(optim, barrier=True)
+        args.n_gpu = torch.cuda.device_count()
     elif args.local_rank == -1 or not args.cuda:
         dev = 'cuda' if torch.cuda.is_available() and args.cuda else 'cpu'
         args.device = torch.device(dev)
@@ -485,12 +480,11 @@ def main():
         args.n_gpu = 1
 
     # Setup logging
-    logging.basicConfig(
-        format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-        level=(logging.INFO if args.local_rank in [-1, 0] else logging.WARN))
-    logger.warning(
-        'Process rank: %s, device: %s, n_gpu: %s, distributed training: %s',
-        args.local_rank, args.device, args.n_gpu, bool(args.local_rank+1))
+    if args.log_file is not None: logger.add(args.log_file)
+    logger.debug((f'Process rank: {args.local_rank}, '
+                  f'device: {args.device}, '
+                  f'n_gpu: {args.n_gpu}, '
+                  f'distributed training: {bool(args.local_rank+1)}'))
 
     # Set seed
     set_seed(args)
@@ -522,15 +516,14 @@ def main():
     if args.local_rank == 0: torch.distributed.barrier()
 
     model.to(args.device)
-    logger.info('Training/evaluation parameters %s', args)
+    logger.debug(f'Training/evaluation parameters {args}')
 
     # Training
     if args.train:
         train_dataset = load_and_cache_examples(args, args.task,
                                                 tokenizer, evaluate=False)
         global_step, tr_loss = train(args, train_dataset, model, tokenizer)
-        logger.info(' global_step = %s, average loss = %s',
-                    global_step, tr_loss)
+        logger.debug(f'global_step = {global_step}, average loss = {tr_loss}')
 
     # Saving best-practices: if you use defaults names for the model,
     # you can reload it using from_pretrained()
@@ -540,7 +533,7 @@ def main():
         if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
             os.makedirs(args.output_dir)
 
-        logger.info('Saving model checkpoint to %s', args.output_dir)
+        logger.info(f'Saving model checkpoint to {args.output_dir}')
         # Take care of distributed/parallel training
         model_to_save = getattr(model, 'module', model)
         # Save a trained model, configuration and tokenizer
@@ -567,9 +560,7 @@ def main():
             pathpattern = f'{args.output_dir}/**/{WEIGHTS_NAME}'
             checkpoints = [os.path.dirname(c)
                            for c in sorted(glob(pathpattern, recursive=True))]
-            logging.getLogger(  # Reduce logging
-                'transformers.modeling_utils').setLevel(logging.WARN)
-        logger.info('Evaluate the following checkpoints: %s', checkpoints)
+        logger.info(f'Evaluate the following checkpoints: {checkpoints}')
         for checkpoint in checkpoints:
             global_step, prefix = '_', ''
             if len(checkpoints) > 1: global_step += checkpoint.split('-')[-1]
@@ -578,10 +569,6 @@ def main():
 
             model = model_class.from_pretrained(checkpoint)
             model.to(args.device)
-            result = evaluate(args, model, tokenizer, prefix=prefix)
+            result = evaluate(args, model, tokenizer, prefix)
             result = {k+global_step: v for k, v in result.items()}
             results.update(result)
-    return results
-
-
-if __name__ == '__main__': main()

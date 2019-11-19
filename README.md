@@ -3,7 +3,8 @@
 At the moment, GLUE for Bert can be executed using
 
 ```sh
-./glue --output-dir=bert --model-type=bert --model=bert-base-multilingual-cased
+./glue --model-type=bert --model=bert-base-multilingual-cased \
+       --output-dir=bert --log-file=bert/$(date -Is).log
 ```
 
 `glue` is basically [ripped-off from transformers](https://github.com/huggingface/transformers/blob/master/examples/run_glue.py)

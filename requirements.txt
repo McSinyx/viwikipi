@@ -1,5 +1,6 @@
-transformers
-tensorboardX
-tensorboard
+loguru
 scikit-learn
 seqeval
+transformers
+tensorboard
+tensorboardX
