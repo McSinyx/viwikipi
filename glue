@@ -471,6 +471,7 @@ def main():
         from torch_xla.core import xla_model as xm
         args.device = xm.xla_device()
         args.xla_model = xm
+        args.n_gpu = 1
     elif args.local_rank == -1 or not args.cuda:
         dev = 'cuda' if torch.cuda.is_available() and args.cuda else 'cpu'
         args.device = torch.device(dev)
