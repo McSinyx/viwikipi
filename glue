@@ -70,7 +70,7 @@ def set_seed(args):
     if args.n_gpu > 0: torch.cuda.manual_seed_all(args.seed)
 
 
-def train(args, train_dataset, model, tokenizer):
+def train(args, train_dataset, model, tokenizer, step_optim):
     """Train the model."""
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
@@ -160,7 +160,7 @@ def train(args, train_dataset, model, tokenizer):
                 parameters = model.parameters()
                 torch.nn.utils.clip_grad_norm_(parameters, args.max_grad_norm)
 
-                args.step_optim(optimizer)
+                step_optim(optimizer)
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
@@ -411,7 +411,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--max-steps', metavar='N', default=-1, type=int,
         help='number of training steps (override num-train-epochs)')
-    parser.add_argument('--warmup-steps', metavar='N', default=10, type=int,
+    parser.add_argument('--warmup-steps', metavar='N', default=0, type=int,
                         help='number of linear warmup steps')
 
     parser.add_argument('--log-file', metavar='PATH', help='path to log file')
@@ -461,12 +461,12 @@ if __name__ == '__main__':
         ptvsd.wait_for_attach()
 
     # Setup CUDA, GPU & distributed training
-    args.step_optim = lambda optimizer: optimizer.step()
+    step_optim = lambda optimizer: optimizer.step()
     if 'COLAB_TPU_ADDR' in os.environ:
         from torch_xla.core import xla_model as xm
         args.device = xm.xla_device()
-        args.step_optim = lambda optim: xm.optimizer_step(optim, barrier=True)
         args.n_gpu = torch.cuda.device_count()
+        step_optim = lambda optim: xm.optimizer_step(optim, barrier=True)
     elif args.local_rank == -1 or not args.cuda:
         dev = 'cuda' if torch.cuda.is_available() and args.cuda else 'cpu'
         args.device = torch.device(dev)
@@ -522,7 +522,8 @@ if __name__ == '__main__':
     if args.train:
         train_dataset = load_and_cache_examples(args, args.task,
                                                 tokenizer, evaluate=False)
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer)
+        global_step, tr_loss = train(args, train_dataset,
+                                     model, tokenizer, step_optim)
         logger.debug(f'global_step = {global_step}, average loss = {tr_loss}')
 
     # Saving best-practices: if you use defaults names for the model,
