@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+# Label tests
+# Copyright (C) 2019  Nguyễn Gia Phong
+#
+# This file is part of viwikipi.
+#
+# viwikipi is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# viwikipi is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with viwikipi.  If not, see <https://www.gnu.org/licenses/>.
+
+import json
+from argparse import ArgumentParser
+
+from torch import tensor
+from tqdm import tqdm
+from transformers.data import InputExample
+from transformers import (
+    glue_convert_examples_to_features, glue_processors,
+    BertConfig, BertForSequenceClassification, BertTokenizer,
+    XLMConfig, XLMForSequenceClassification, XLMTokenizer)
+
+MAX_LENGTH = 128
+MAX_LOSS = 0.69
+MODELS = {'bert': (BertConfig, BertForSequenceClassification, BertTokenizer),
+          'xlm': (XLMConfig, XLMForSequenceClassification, XLMTokenizer)}
+MODEL_LOADERS = {name: tuple(map(lambda cls: cls.from_pretrained, classes))
+                 for name, classes in MODELS.items()}
+OUTPUT_MODE = 'classification'
+TASK = 'mrpc'
+
+
+def load_model(path, model, labels):
+    """Return a tuple of model and tokenizer loaded from given path."""
+    cfg, mdl, tok = MODEL_LOADERS[model]
+    config = cfg(path, num_labels=len(labels))
+    return mdl(path, config=config), tok(path, do_lower_case=False)
+
+
+def convert(__id__, question, title, paragraphs):
+    """Return a tuple of ID, question and dictionary of paragraphs
+    from the given test.
+    """
+    return __id__, question, dict(d.values() for d in paragraphs)
+
+
+def exampled(tests, labels):
+    """Return an iterator of tuples of pair ID and InputExample
+    from the given tests.
+    """
+    label = labels[0]   # ugly hack to convert to features
+    for test in tests:
+        qid, question, paragraphs = convert(**test)
+        for pid, paragraph in paragraphs.items():
+            guid = f'{qid},{pid}\n'
+            yield guid, InputExample(guid, question, paragraph, label)
+
+
+parser = ArgumentParser()
+parser.add_argument('input', help='test in JSON format')
+parser.add_argument('output', help='output path')
+parser.add_argument('-t', '--model-type', required=True,
+                    choices=MODELS.keys(), help='model type')
+parser.add_argument('-m', '--model', required=True,
+                    metavar='PATH', help='model directory')
+args = parser.parse_args()
+
+labels = glue_processors[TASK]().get_labels()
+model, tokenizer = load_model(args.model, args.model_type, labels)
+
+with open(args.input) as fi, open(args.output, 'w') as fo:
+    guids, examples = zip(*exampled(json.load(fi), labels))
+    features = glue_convert_examples_to_features(
+        list(examples), tokenizer, max_length=MAX_LENGTH,
+        task=TASK, label_list=labels, output_mode=OUTPUT_MODE)
+
+    print('test_id,answer', file=fo)
+    for guid, feature in zip(tqdm(guids), features):
+        inputs = feature.to_dict()
+        del inputs['label']     # and now we need to remove it
+        for key, value in inputs.items():   # tensorize lists
+            inputs[key] = tensor(value).unsqueeze(0)
+        if model(labels=tensor([1]), **inputs)[0] < MAX_LOSS: fo.write(guid)
