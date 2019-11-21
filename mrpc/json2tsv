@@ -53,10 +53,20 @@ def write(file, dicts):
 
 
 tokenize = BertTokenizer.from_pretrained(BERT_MODEL).tokenize
-with open('train.json') as f:
+with open('train.json', 'rb') as f:
     data = filter(lambda d: len(tokenize(BERT_TEXT.format(**d))) < 125,
                   standardized(json.load(f)))
 
-with open('train.tsv', 'w') as train, open('dev.tsv', 'w') as dev:
-    write(train, islice(data, TRAIN_SIZE))
+with open('train.tsv', 'w', encoding='utf-8') as train, open('dev.tsv', 'w', encoding='utf-8') as dev:
+    train_dat = islice(data, TRAIN_SIZE)
+    train_dat = list(train_dat)
+    duplicate = []
+    for i in train_dat:
+        if i['label']:
+            duplicate.append(i)
+    for i in duplicate:
+        train_dat.append(i)
+    from random import shuffle
+    shuffle(train_dat)
+    write(train, train_dat)
     write(dev, data)
