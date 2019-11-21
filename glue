@@ -181,7 +181,7 @@ def train(args, train_dataset, model, tokenizer, step_optim):
                     tb_writer.add_scalar(
                         'loss', (tr_loss - logging_loss)/args.logging_steps,
                         global_step)
-                    logger.debug(f'global_step = {global_step}, average loss = {tr_loss}')
+                    logger.debug(f'average loss = {tr_loss / global_step}')
                     logging_loss = tr_loss
 
                 if global_step % args.save_steps == 0:
