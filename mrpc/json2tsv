@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2019  Nguyễn Gia Phong
+# Copyright (C) 2019  Ngô Ngọc Đức Huy
 #
 # This file is part of viwikipi.
 #
@@ -19,7 +20,8 @@
 import csv
 import json
 import re
-from itertools import islice
+from itertools import islice, tee
+from random import shuffle
 
 from transformers import BertTokenizer
 
@@ -53,20 +55,14 @@ def write(file, dicts):
 
 
 tokenize = BertTokenizer.from_pretrained(BERT_MODEL).tokenize
-with open('train.json', 'rb') as f:
+with open('train.json') as f:
     data = filter(lambda d: len(tokenize(BERT_TEXT.format(**d))) < 125,
                   standardized(json.load(f)))
 
-with open('train.tsv', 'w', encoding='utf-8') as train, open('dev.tsv', 'w', encoding='utf-8') as dev:
-    train_dat = islice(data, TRAIN_SIZE)
-    train_dat = list(train_dat)
-    duplicate = []
-    for i in train_dat:
-        if i['label']:
-            duplicate.append(i)
-    for i in duplicate:
-        train_dat.append(i)
-    from random import shuffle
-    shuffle(train_dat)
-    write(train, train_dat)
+with open('train.tsv', 'w') as train, open('dev.tsv', 'w') as dev:
+    one, another = tee(islice(data, TRAIN_SIZE))
+    train_data = [example for example in one if example['label']]
+    train_data.extend(another)
+    shuffle(train_data)
+    write(train, train_data)
     write(dev, data)
