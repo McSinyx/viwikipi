@@ -24,24 +24,24 @@ from torch import tensor
 from tqdm import tqdm
 from transformers.data import InputExample
 from transformers import (
-    glue_convert_examples_to_features, glue_processors,
+    glue_convert_examples_to_features,
     BertConfig, BertForSequenceClassification, BertTokenizer,
     XLMConfig, XLMForSequenceClassification, XLMTokenizer)
 
-MAX_LENGTH = 128
-MAX_LOSS = 0.69
+LABELS = ['0', '1']
 MODELS = {'bert': (BertConfig, BertForSequenceClassification, BertTokenizer),
           'xlm': (XLMConfig, XLMForSequenceClassification, XLMTokenizer)}
 MODEL_LOADERS = {name: tuple(map(lambda cls: cls.from_pretrained, classes))
                  for name, classes in MODELS.items()}
 OUTPUT_MODE = 'classification'
 TASK = 'mrpc'
+TRUE = tensor([1])
 
 
-def load_model(path, model, labels):
+def load_model(path, model):
     """Return a tuple of model and tokenizer loaded from given path."""
     cfg, mdl, tok = MODEL_LOADERS[model]
-    config = cfg(path, num_labels=len(labels))
+    config = cfg(path, num_labels=len(LABELS))
     return mdl(path, config=config), tok(path, do_lower_case=False)
 
 
@@ -52,11 +52,11 @@ def convert(__id__, question, title, paragraphs):
     return __id__, question, dict(d.values() for d in paragraphs)
 
 
-def exampled(tests, labels):
+def exampled(tests):
     """Return an iterator of tuples of pair ID and InputExample
     from the given tests.
     """
-    label = labels[0]   # ugly hack to convert to features
+    label = LABELS[0]   # ugly hack to convert to features
     for test in tests:
         qid, question, paragraphs = convert(**test)
         for pid, paragraph in paragraphs.items():
@@ -71,16 +71,18 @@ parser.add_argument('-t', '--model-type', required=True,
                     choices=MODELS.keys(), help='model type')
 parser.add_argument('-m', '--model', required=True,
                     metavar='PATH', help='model directory')
+parser.add_argument('-l', '--max-loss', default=0.69, type=float,
+                    metavar='X', help='maximum loss for a match')
+parser.add_argument('-s', '--max-seq', default=256, type=int,
+                    metavar='N', help='maximum token sequence length')
 args = parser.parse_args()
 
-labels = glue_processors[TASK]().get_labels()
-model, tokenizer = load_model(args.model, args.model_type, labels)
-
+model, tokenizer = load_model(args.model, args.model_type)
 with open(args.input) as fi, open(args.output, 'w') as fo:
-    guids, examples = zip(*exampled(json.load(fi), labels))
+    guids, examples = zip(*exampled(json.load(fi)))
     features = glue_convert_examples_to_features(
-        list(examples), tokenizer, max_length=MAX_LENGTH,
-        task=TASK, label_list=labels, output_mode=OUTPUT_MODE)
+        list(examples), tokenizer, max_length=args.max_seq,
+        task=TASK, label_list=LABELS, output_mode=OUTPUT_MODE)
 
     print('test_id,answer', file=fo)
     for guid, feature in zip(tqdm(guids), features):
@@ -88,4 +90,4 @@ with open(args.input) as fi, open(args.output, 'w') as fo:
         del inputs['label']     # and now we need to remove it
         for key, value in inputs.items():   # tensorize lists
             inputs[key] = tensor(value).unsqueeze(0)
-        if model(labels=tensor([1]), **inputs)[0] < MAX_LOSS: fo.write(guid)
+        if model(labels=TRUE, **inputs)[0] < args.max_loss: fo.write(guid)
