@@ -38,16 +38,16 @@ except ImportError:
 from tqdm import tqdm, trange
 
 from transformers import (
+    glue_compute_metrics as compute_metrics,
+    glue_output_modes as output_modes,
+    glue_processors as processors,
+    glue_convert_examples_to_features as examples2features,
     WEIGHTS_NAME, AdamW, WarmupLinearSchedule,
     BertConfig, BertForSequenceClassification, BertTokenizer,
     RobertaConfig, RobertaForSequenceClassification, RobertaTokenizer,
     XLMConfig, XLMForSequenceClassification, XLMTokenizer,
     XLNetConfig, XLNetForSequenceClassification, XLNetTokenizer,
     DistilBertConfig, DistilBertForSequenceClassification, DistilBertTokenizer)
-from transformers import glue_compute_metrics as compute_metrics
-from transformers import glue_output_modes as output_modes
-from transformers import glue_processors as processors
-from transformers import glue_convert_examples_to_features as examples2features
 
 ALL_MODELS = tuple(chain.from_iterable(
     conf.pretrained_config_archive_map.keys()
@@ -274,6 +274,7 @@ def evaluate(args, model, tokenizer, prefix):
         elif args.output_mode == 'regression':
             preds = np.squeeze(preds)
         result = compute_metrics(eval_task, preds, out_label_ids)
+        result['loss'] = eval_loss
         results.update(result)
 
         eval_dir = os.path.join(eval_output_dir, prefix)
@@ -352,8 +353,8 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
 
 
 if __name__ == '__main__':
-    parser = ArgumentParser()
-    # Required parameters
+    parser = ArgumentParser(usage='%(prog)s [options]')
+
     parser.add_argument('--model-type', required=True,
                         choices=MODEL_CLASSES.keys(), help='model type')
     parser.add_argument(
@@ -364,9 +365,8 @@ if __name__ == '__main__':
     parser.add_argument('--data-dir', default='mrpc', metavar='DIR',
                         help='directory containing data (e.g. TSVs)')
     parser.add_argument('--output-dir', required=True, metavar='DIR',
-                        help='storage for  model predictions and checkpoints')
+                        help='storage for model predictions and checkpoints')
 
-    # Other parameters
     parser.add_argument(
         '--config', metavar='PATH_OR_NAME',
         help='pretrained config name or path (fallback to model)')
