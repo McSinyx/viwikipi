@@ -20,31 +20,63 @@
 import csv
 import json
 import re
-from itertools import islice, tee
-from random import shuffle
+from itertools import islice, starmap
+from random import choice
 
 from transformers import BertTokenizer
+from underthesea import pos_tag
 
-WHITESPACES = re.compile('\s+')
+RETURN = re.compile('\s*\r\s*')
 
-TRAIN_SIZE = 10010
+TRAIN_SIZE = 12400
 FIELDS = 'label', 'qid', 'aid', 'question', 'answer'
 
 BERT_MODEL = 'bert-base-multilingual-cased'
 BERT_TEXT = '[CLS] {question} [SEP] {answer} [SEP]'
 
 
+with open('wn/adj.csv') as adj:
+    ADJ = {word: group for group in (line.strip().split(',') for line in adj)
+           for word in group}
+with open('wn/noun.csv') as noun:
+    NOUN = {word: group for group in (line.strip().split(',') for line in noun)
+            for word in group}
+with open('wn/verb.csv') as verb:
+    VERB = {word: group for group in (line.strip().split(',') for line in verb)
+            for word in group}
+
+
+def syn(word, pos):
+    """Return a random synonym of the given word."""
+    if pos.startswith('A'): return choice(ADJ.get(word, [word]))
+    if pos.startswith('N'): return choice(NOUN.get(word, [word]))
+    if pos.startswith('V'): return choice(VERB.get(word, [word]))
+    return word
+
+
+def paraphrased(text):
+    """Return the given text paraphrased."""
+    return ' '.join(starmap(syn, pos_tag(text)))
+
 def spaced(string):
     """Return the string obtained by replacing all whitespaces by spaces."""
-    return WHITESPACES.sub(' ', string).strip()
-
+    return RETURN.sub(' ', string).strip()
 
 def standardized(data):
     """Return an itertor of standardized data in MRPC format."""
     for d in data:
         sid = ''.join(c for c in d['id'] if c.isnumeric())
-        yield dict(label=int(d['label']), qid=sid+'0', aid=sid+'1',
-                   question=spaced(d['question']), answer=spaced(d['text']))
+        if int(d['label']):
+            yield dict(qid=sid+'0', aid=sid+'1', label=1,
+                       question=d['question'], answer=spaced(d['text']))
+            yield dict(qid=sid+'2', aid=sid+'3', label=1,
+                       question=paraphrased(d['question']),
+                       answer=paraphrased(d['text']))
+        else:
+            for i, paragraph in enumerate(RETURN.split(d['text'])):
+                yield dict(qid=f'{sid}{i*2}', aid=f'{sid}{i*2+1}',
+                           question=paraphrased(d['question']),
+                           answer=paragraph, label=0)
 
 
 def write(file, dicts):
@@ -55,14 +87,10 @@ def write(file, dicts):
 
 
 tokenize = BertTokenizer.from_pretrained(BERT_MODEL).tokenize
-with open('train.json') as f:
+with open('mrpc/train.json') as f:
     data = filter(lambda d: len(tokenize(BERT_TEXT.format(**d))) < 125,
                   standardized(json.load(f)))
 
-with open('train.tsv', 'w') as train, open('dev.tsv', 'w') as dev:
-    one, another = tee(islice(data, TRAIN_SIZE))
-    train_data = [example for example in one if example['label']]
-    train_data.extend(another)
-    shuffle(train_data)
-    write(train, train_data)
+with open('mrpc/train.tsv', 'w') as train, open('mrpc/dev.tsv', 'w') as dev:
+    write(train, islice(data, TRAIN_SIZE))
     write(dev, data)

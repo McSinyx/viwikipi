@@ -28,13 +28,15 @@ from transformers import (
     BertConfig, BertForSequenceClassification, BertTokenizer,
     XLMConfig, XLMForSequenceClassification, XLMTokenizer)
 
-LABELS = ['0', '1']
 MODELS = {'bert': (BertConfig, BertForSequenceClassification, BertTokenizer),
           'xlm': (XLMConfig, XLMForSequenceClassification, XLMTokenizer)}
 MODEL_LOADERS = {name: tuple(map(lambda cls: cls.from_pretrained, classes))
                  for name, classes in MODELS.items()}
 OUTPUT_MODE = 'classification'
 TASK = 'mrpc'
+
+LABELS = ['0', '1']
+FALSE = tensor([0])
 TRUE = tensor([1])
 
 
@@ -71,8 +73,6 @@ parser.add_argument('-t', '--model-type', required=True,
                     choices=MODELS.keys(), help='model type')
 parser.add_argument('-m', '--model', required=True,
                     metavar='PATH', help='model directory')
-parser.add_argument('-l', '--max-loss', default=0.69, type=float,
-                    metavar='X', help='maximum loss for a match')
 parser.add_argument('-s', '--max-seq', default=256, type=int,
                     metavar='N', help='maximum token sequence length')
 args = parser.parse_args()
@@ -90,4 +90,5 @@ with open(args.input) as fi, open(args.output, 'w') as fo:
         del inputs['label']     # and now we need to remove it
         for key, value in inputs.items():   # tensorize lists
             inputs[key] = tensor(value).unsqueeze(0)
-        if model(labels=TRUE, **inputs)[0] < args.max_loss: fo.write(guid)
+        if model(labels=TRUE, **inputs)[0] < model(labels=FALSE, **inputs)[0]:
+            fo.write(guid)
