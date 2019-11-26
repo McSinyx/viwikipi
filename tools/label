@@ -20,7 +20,7 @@
 import json
 from argparse import ArgumentParser
 
-from torch import tensor
+from torch import cuda, device, tensor
 from tqdm import tqdm
 from transformers.data import InputExample
 from transformers import (
@@ -28,16 +28,13 @@ from transformers import (
     BertConfig, BertForSequenceClassification, BertTokenizer,
     XLMConfig, XLMForSequenceClassification, XLMTokenizer)
 
+LABELS = ['0', '1']
 MODELS = {'bert': (BertConfig, BertForSequenceClassification, BertTokenizer),
           'xlm': (XLMConfig, XLMForSequenceClassification, XLMTokenizer)}
 MODEL_LOADERS = {name: tuple(map(lambda cls: cls.from_pretrained, classes))
                  for name, classes in MODELS.items()}
 OUTPUT_MODE = 'classification'
 TASK = 'mrpc'
-
-LABELS = ['0', '1']
-FALSE = tensor([0])
-TRUE = tensor([1])
 
 
 def load_model(path, model):
@@ -78,6 +75,10 @@ parser.add_argument('-s', '--max-seq', default=256, type=int,
 args = parser.parse_args()
 
 model, tokenizer = load_model(args.model, args.model_type)
+dev = device('cuda' if cuda.is_available() else 'cpu')
+model.to(dev)
+false = tensor([0]).to(dev)
+true = tensor([1]).to(dev)
 with open(args.input) as fi, open(args.output, 'w') as fo:
     guids, examples = zip(*exampled(json.load(fi)))
     features = glue_convert_examples_to_features(
@@ -89,6 +90,6 @@ with open(args.input) as fi, open(args.output, 'w') as fo:
         inputs = feature.to_dict()
         del inputs['label']     # and now we need to remove it
         for key, value in inputs.items():   # tensorize lists
-            inputs[key] = tensor(value).unsqueeze(0)
-        if model(labels=TRUE, **inputs)[0] < model(labels=FALSE, **inputs)[0]:
+            inputs[key] = tensor(value).unsqueeze(0).to(dev)
+        if model(labels=true, **inputs)[0] < model(labels=false, **inputs)[0]:
             fo.write(guid)
