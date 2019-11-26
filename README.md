@@ -18,6 +18,8 @@ tools/label -t bert -m bert tests/test.json tests/submission.csv
 `glue` is basically [ripped-off from transformers](https://github.com/huggingface/transformers/blob/master/examples/run_glue.py)
 with saner defaults and GNU-style long arguments.
 
+Training data are provided by [Zalo AI Challenge 2019](https://challenge.zalo.ai/).
+
 Vietnamese WordNet is taken from
 [zeloru/vietnamese-wordnet](https://github.com/zeloru/vietnamese-wordnet).
 
