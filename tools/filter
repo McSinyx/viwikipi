@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Label tests
+# Filter heavily lossed data
 # Copyright (C) 2019  Nguyễn Gia Phong
 #
 # This file is part of viwikipi.
@@ -17,10 +17,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with viwikipi.  If not, see <https://www.gnu.org/licenses/>.
 
-import json
+import csv
 from argparse import ArgumentParser
-from itertools import groupby, tee
-from operator import itemgetter
 
 from torch import cuda, device, no_grad, tensor
 from tqdm import tqdm
@@ -38,6 +36,8 @@ MODEL_LOADERS = {name: tuple(map(lambda cls: cls.from_pretrained, classes))
 OUTPUT_MODE = 'classification'
 TASK = 'mrpc'
 
+FIELDS = 'label', 'qid', 'aid', 'question', 'answer'
+
 
 def load_model(path, model):
     """Return a tuple of model and tokenizer loaded from given path."""
@@ -46,67 +46,52 @@ def load_model(path, model):
     return mdl(path, config=config), tok(path, do_lower_case=False)
 
 
-def convert(__id__, question, title, paragraphs):
+def convert(label, qid, aid, question, answer):
     """Return a tuple of ID, question and dictionary of paragraphs
     from the given test.
     """
-    return __id__, question, dict(d.values() for d in paragraphs)
+    return qid, question, answer, label
 
 
 def exampled(tests):
     """Return an iterator of tuples of pair ID and InputExample
     from the given tests.
     """
-    label = LABELS[0]   # ugly hack to convert to features
-    for test in tests:
-        qid, question, paragraphs = convert(**test)
-        for pid, paragraph in paragraphs.items():
-            yield qid, pid, InputExample(qid+pid, question, paragraph, label)
-
-
-def evaluated(model, features):
-    """Return an iterator of relative loss
-    from evaluating features using model.
-    """
-    dev = device('cuda' if cuda.is_available() else 'cpu')
-    model.to(dev)
-    def lossf(inputs): return model(labels=tensor([0]).to(dev), **inputs)[0]
-    def losst(inputs): return model(labels=tensor([1]).to(dev), **inputs)[0]
-
-    for feature in features:
-        inputs = feature.to_dict()
-        del inputs['label']     # and now we need to remove it
-        for key, value in inputs.items():   # tensorize lists
-            inputs[key] = tensor(value).unsqueeze(0).to(dev)
-        yield (losst(inputs) - lossf(inputs)).item()
+    next(tests)
+    for test in tests: yield test, InputExample(*convert(**test))
 
 
 parser = ArgumentParser()
-parser.add_argument('input', help='test in JSON format')
-parser.add_argument('output', help='output path')
+parser.add_argument('input', help='input dataset in TSV format')
+parser.add_argument('output', help='filtered dataset in TSV format')
 parser.add_argument('-t', '--model-type', required=True,
                     choices=MODELS.keys(), help='model type')
 parser.add_argument('-m', '--model', required=True,
                     metavar='PATH', help='model directory')
 parser.add_argument('-s', '--max-seq', default=256, type=int,
                     metavar='N', help='maximum token sequence length')
+parser.add_argument('-l', '--max-loss', default=0.35, type=float,
+                    metavar='N', help='maximum loss')
 args = parser.parse_args()
 
 model, tokenizer = load_model(args.model, args.model_type)
+dev = device('cuda' if cuda.is_available() else 'cpu')
+model.to(dev)
 with open(args.input) as fi, open(args.output, 'w') as fo:
-    qids, pids, examples = zip(*exampled(json.load(fi)))
+    reader = csv.DictReader(fi, fieldnames=FIELDS, delimiter='\t')
+    rawex, examples = zip(*exampled(reader))
     features = glue_convert_examples_to_features(
         list(examples), tokenizer, max_length=args.max_seq,
         task=TASK, label_list=LABELS, output_mode=OUTPUT_MODE)
 
-    fo.write('test_id,answer\n')
+    writer = csv.DictWriter(fo, fieldnames=FIELDS, delimiter='\t')
+    writer.writeheader()
     with no_grad():
-        for i, group in groupby(
-            zip(qids, tqdm(pids), evaluated(model, features)), itemgetter(0)):
-            groupa, groupb = tee(group)
-            qid, pid, loss = min(groupa, key=itemgetter(-1))
-            if loss >= 0:
-                fo.write(f'{qid},{pid}\n')
-                continue
-            for qid, pid, loss in groupb:
-                if loss < 0: fo.write(f'{qid},{pid}\n')
+        for ex, feature in zip(tqdm(rawex), features):
+            inputs = feature.to_dict()
+            del inputs['label']
+            for key, value in inputs.items():   # tensorize lists
+                inputs[key] = tensor(value).unsqueeze(0).to(dev)
+                label = tensor([int(ex['label'])]).to(dev)
+                if model(labels=label, **inputs)[0] > args.max_loss:
+                    writer.writerow(ex)
