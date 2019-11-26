@@ -58,9 +58,11 @@ def paraphrased(text):
     """Return the given text paraphrased."""
     return ' '.join(starmap(syn, pos_tag(text)))
 
+
 def spaced(string):
     """Return the string obtained by replacing all whitespaces by spaces."""
     return RETURN.sub(' ', string).strip()
+
 
 def standardized(data):
     """Return an itertor of standardized data in MRPC format."""
