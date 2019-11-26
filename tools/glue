@@ -405,7 +405,7 @@ if __name__ == '__main__':
         '--gradient-accumulation-steps', metavar='N', default=1, type=int,
         help=('number of updates steps to accumulate '
               'before performing a backward/update pass'))
-    parser.add_argument('--learning-rate', metavar='RATE', default=5e-5,
+    parser.add_argument('--learning-rate', metavar='RATE', default=5e-6,
                         type=float, help='the initial learning rate for Adam')
     parser.add_argument('--weight-decay', metavar='W', default=0.0,
                         type=float, help='weight decay if we apply some')
