@@ -19,8 +19,6 @@
 
 import json
 from argparse import ArgumentParser
-from itertools import groupby, tee
-from operator import itemgetter
 
 from torch import cuda, device, no_grad, tensor
 from tqdm import tqdm
@@ -61,24 +59,8 @@ def exampled(tests):
     for test in tests:
         qid, question, paragraphs = convert(**test)
         for pid, paragraph in paragraphs.items():
-            yield qid, pid, InputExample(qid+pid, question, paragraph, label)
-
-
-def evaluated(model, features):
-    """Return an iterator of relative loss
-    from evaluating features using model.
-    """
-    dev = device('cuda' if cuda.is_available() else 'cpu')
-    model.to(dev)
-    def lossf(inputs): return model(labels=tensor([0]).to(dev), **inputs)[0]
-    def losst(inputs): return model(labels=tensor([1]).to(dev), **inputs)[0]
-
-    for feature in features:
-        inputs = feature.to_dict()
-        del inputs['label']     # and now we need to remove it
-        for key, value in inputs.items():   # tensorize lists
-            inputs[key] = tensor(value).unsqueeze(0).to(dev)
-        yield (losst(inputs) - lossf(inputs)).item()
+            guid = f'{qid},{pid}\n'
+            yield guid, InputExample(guid, question, paragraph, label)
 
 
 parser = ArgumentParser()
@@ -93,20 +75,22 @@ parser.add_argument('-s', '--max-seq', default=256, type=int,
 args = parser.parse_args()
 
 model, tokenizer = load_model(args.model, args.model_type)
+dev = device('cuda' if cuda.is_available() else 'cpu')
+model.to(dev)
+false = tensor([0]).to(dev)
+true = tensor([1]).to(dev)
 with open(args.input) as fi, open(args.output, 'w') as fo:
-    qids, pids, examples = zip(*exampled(json.load(fi)))
+    guids, examples = zip(*exampled(json.load(fi)))
     features = glue_convert_examples_to_features(
         list(examples), tokenizer, max_length=args.max_seq,
         task=TASK, label_list=LABELS, output_mode=OUTPUT_MODE)
 
-    fo.write('test_id,answer\n')
+    print('test_id,answer', file=fo)
     with no_grad():
-        for i, group in groupby(
-            zip(qids, tqdm(pids), evaluated(model, features)), itemgetter(0)):
-            groupa, groupb = tee(group)
-            qid, pid, loss = min(groupa, key=itemgetter(-1))
-            if loss >= 0:
-                fo.write(f'{qid},{pid}\n')
-                continue
-            for qid, pid, loss in groupb:
-                if loss < 0: fo.write(f'{qid},{pid}\n')
+        for guid, feature in zip(tqdm(guids), features):
+            inputs = feature.to_dict()
+            del inputs['label']     # and now we need to remove it
+            for key, value in inputs.items():   # tensorize lists
+                inputs[key] = tensor(value).unsqueeze(0).to(dev)
+            if model(labels=true, **inputs)[0] < model(labels=false, **inputs)[0]:
+                fo.write(guid)
