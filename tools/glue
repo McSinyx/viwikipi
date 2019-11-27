@@ -42,7 +42,7 @@ from transformers import (
     glue_output_modes as output_modes,
     glue_processors as processors,
     glue_convert_examples_to_features as examples2features,
-    WEIGHTS_NAME, AdamW, WarmupLinearSchedule,
+    WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
     BertConfig, BertForSequenceClassification, BertTokenizer,
     RobertaConfig, RobertaForSequenceClassification, RobertaTokenizer,
     XLMConfig, XLMForSequenceClassification, XLMTokenizer,
@@ -103,8 +103,8 @@ def train(args, train_dataset, model, tokenizer, step_optim):
          'weight_decay': 0.0}]
     optimizer = AdamW(optimizer_grouped_parameters,
                       lr=args.learning_rate, eps=args.adam_epsilon)
-    scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps,
-                                     t_total=t_total)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer, args.warmup_steps, t_total)
 
     # multi-gpu training
     if args.n_gpu > 1: model = torch.nn.DataParallel(model)
